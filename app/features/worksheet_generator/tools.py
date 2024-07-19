@@ -7,6 +7,7 @@ import requests
 import os
 import json
 import time
+import logging
 
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -125,58 +126,22 @@ class LocalFileLoader:
         return documents
 
 class URLLoader:
-    def __init__(self, file_loader=None, expected_file_type="pdf", verbose=False):
-        self.loader = file_loader or BytesFilePDFLoader
-        self.expected_file_type = expected_file_type
+    def __init__(self, verbose=False):
         self.verbose = verbose
+        self.logger = logging.getLogger(__name__)
 
-    def load(self, tool_files: List[ToolFile]) -> List[Document]:
-        queued_files = []
-        documents = []
-        any_success = False
-
-        for tool_file in tool_files:
-            try:
-                url = tool_file.url
-                response = requests.get(url)
-                parsed_url = urlparse(url)
-                path = parsed_url.path
-
-                if response.status_code == 200:
-                    # Read file
-                    file_content = BytesIO(response.content)
-
-                    # Check file type
-                    file_type = path.split(".")[-1]
-                    if file_type != self.expected_file_type:
-                        raise LoaderError(f"Expected file type: {self.expected_file_type}, but got: {file_type}")
-
-                    # Append to Queue
-                    queued_files.append((file_content, file_type))
-                    if self.verbose:
-                        logger.info(f"Successfully loaded file from {url}")
-
-                    any_success = True  # Mark that at least one file was successfully loaded
-                else:
-                    logger.error(f"Request failed to load file from {url} and got status code {response.status_code}")
-
-            except Exception as e:
-                logger.error(f"Failed to load file from {url}")
-                logger.error(e)
-                continue
-
-        # Pass Queue to the file loader if there are any successful loads
-        if any_success:
-            file_loader = self.loader(queued_files)
-            documents = file_loader.load()
-
+    def load(self, url):
+        try:
+            response = requests.get(url, timeout=10)  # Set a reasonable timeout
+            response.raise_for_status()  # Raises an HTTPError for bad responses
+            parsed_url = urlparse(url)
+            file_type = parsed_url.path.split('.')[-1]
             if self.verbose:
-                logger.info(f"Loaded {len(documents)} documents")
-
-        if not any_success:
-            raise LoaderError("Unable to load any files from URLs")
-
-        return documents
+                self.logger.debug(f"Successfully loaded URL: {url} with file type: {file_type}")
+            return response.content
+        except requests.RequestException as e:
+            self.logger.error(f"Failed to load URL {url}: {e}")
+            return None
 
 class RAGpipeline:
     def __init__(self, loader=None, splitter=None, vectorstore_class=None, embedding_model=None, verbose=False):
